@@ -51,7 +51,9 @@ def load_materials() -> list[dict[str, object]]:
                 "code": row[0].strip(),
                 "name": row[1].strip(),
                 "brand": row[2].strip(),
+                "purchase_quantity": parse_brazilian_number(row[3]),
                 "unit": normalize_unit(row[4]),
+                "price": parse_brazilian_number(row[5]),
                 "unit_cost": cost,
                 "label": label,
             }
@@ -115,10 +117,13 @@ def material_already_exists(
     quantity: float,
     unit: str,
     price: float,
+    excluded_code: str | None = None,
 ) -> bool:
     rows = sheets.worksheet(MATERIALS_WORKSHEET).get_all_values()[1:]
     for row in rows:
         if len(row) < 6:
+            continue
+        if excluded_code and row[0].strip() == excluded_code:
             continue
         saved_quantity = parse_brazilian_number(row[3])
         saved_price = parse_brazilian_number(row[5])
@@ -158,14 +163,14 @@ def render_connection_status() -> None:
 def render_home() -> None:
     render_page_header(
         "Caju — Doces em família",
-        "Gestão de receitas, matérias-primas e produtos.",
+        "Gestão de receitas, ingredientes e produtos.",
     )
     left, right = st.columns([2, 1])
     with left:
         st.markdown(
             """
             <div class="caju-card">
-                <h3>Cadastro de matéria-prima</h3>
+                <h3>Cadastro de ingredientes</h3>
                 <p style="margin-bottom:0">
                     Cadastre ingredientes e calcule automaticamente o custo por unidade.
                 </p>
@@ -177,12 +182,7 @@ def render_home() -> None:
         render_connection_status()
 
 
-def render_material_form() -> None:
-    render_page_header(
-        "Cadastro de matéria-prima",
-        "Inclua um novo ingrediente no banco de dados de custos.",
-    )
-
+def render_new_ingredient_form() -> None:
     try:
         registered_brands = load_registered_brands()
     except Exception:
@@ -198,6 +198,7 @@ def render_material_form() -> None:
             ingredient = st.text_input(
                 "Ingrediente *",
                 placeholder="Ex.: Leite condensado",
+                key="new_ingredient_name",
             )
         with brand_column:
             brand = st.selectbox(
@@ -206,6 +207,7 @@ def render_material_form() -> None:
                 index=None,
                 placeholder="Selecione ou digite uma nova marca",
                 accept_new_options=True,
+                key="new_ingredient_brand",
             )
 
         st.markdown(
@@ -217,17 +219,20 @@ def render_material_form() -> None:
             quantity_text = st.text_input(
                 "Quantidade *",
                 placeholder="Ex.: 395",
+                key="new_ingredient_quantity",
             )
         with unit_column:
             unit = st.selectbox(
                 "Unidade *",
                 options=("g", "kg", "ml", "l", "UN"),
                 index=0,
+                key="new_ingredient_unit",
             )
         with price_column:
             price_text = st.text_input(
                 "Valor pago (R$) *",
                 placeholder="Ex.: 6,35",
+                key="new_ingredient_price",
             )
 
         quantity = parse_brazilian_number(quantity_text)
@@ -251,10 +256,10 @@ def render_material_form() -> None:
             unsafe_allow_html=True,
         )
         submitted = st.button(
-            "Cadastrar matéria-prima",
+            "Cadastrar ingrediente",
             use_container_width=True,
-            key="submit_material",
-            disabled=st.session_state.get("material_save_in_progress", False),
+            key="new_submit_ingredient",
+            disabled=st.session_state.get("new_ingredient_save_in_progress", False),
         )
 
     if not submitted:
@@ -278,11 +283,11 @@ def render_material_form() -> None:
         st.error(" ".join(errors))
         return
 
-    if st.session_state.get("material_save_in_progress", False):
+    if st.session_state.get("new_ingredient_save_in_progress", False):
         st.warning("Cadastro em andamento. Aguarde a conclusão.")
         return
 
-    st.session_state.material_save_in_progress = True
+    st.session_state.new_ingredient_save_in_progress = True
     try:
         # A trava mantém a consulta de duplicidade e a gravação como uma única
         # operação dentro deste servidor, inclusive entre sessões simultâneas.
@@ -297,7 +302,7 @@ def render_material_form() -> None:
                 price=price,
             ):
                 st.warning(
-                    "Esta matéria-prima já está cadastrada com a mesma marca, "
+                    "Este ingrediente já está cadastrado com a mesma marca, "
                     "quantidade, unidade e valor pago."
                 )
                 return
@@ -319,9 +324,233 @@ def render_material_form() -> None:
         st.error(f"Não foi possível salvar o cadastro: {error}")
         return
     finally:
-        st.session_state.material_save_in_progress = False
+        st.session_state.new_ingredient_save_in_progress = False
 
-    st.success(f"Matéria-prima cadastrada com sucesso. Código: {code}.")
+    st.success(f"Ingrediente cadastrado com sucesso. Código: {code}.")
+
+
+def update_ingredient_in_recipes(
+    sheets: GoogleSheetsClient,
+    ingredient_code: str,
+    ingredient_name: str,
+    unit: str,
+    unit_cost: float,
+) -> None:
+    """Mantém as receitas sincronizadas após a alteração de um ingrediente."""
+    worksheet = sheets.worksheet(RECIPES_WORKSHEET)
+    rows = worksheet.get_all_values()[1:]
+    updates = []
+    for sheet_row, raw_row in enumerate(rows, start=2):
+        row = raw_row + [""] * (9 - len(raw_row))
+        if row[2].strip() != ingredient_code:
+            continue
+        used_quantity = parse_brazilian_number(row[4])
+        item_cost: float | str = (
+            used_quantity * unit_cost if used_quantity is not None else ""
+        )
+        updates.append(
+            {
+                "range": f"D{sheet_row}:G{sheet_row}",
+                "values": [[ingredient_name, row[4], unit, item_cost]],
+            }
+        )
+    if updates:
+        worksheet.batch_update(updates, value_input_option="USER_ENTERED")
+
+
+def render_edit_ingredient_form() -> None:
+    try:
+        ingredients = load_materials()
+        registered_brands = load_registered_brands()
+    except Exception as error:
+        st.error(f"Não foi possível carregar os ingredientes: {error}")
+        return
+
+    if not ingredients:
+        st.info("Ainda não existem ingredientes cadastrados.")
+        return
+
+    ingredient_by_label = {
+        str(ingredient["label"]): ingredient for ingredient in ingredients
+    }
+    selected_label = st.selectbox(
+        "Ingrediente cadastrado",
+        options=list(ingredient_by_label),
+        index=None,
+        placeholder="Selecione um ingrediente para consultar",
+        key="edit_selected_ingredient",
+    )
+    if not selected_label:
+        st.info("Selecione um ingrediente para carregar os dados.")
+        return
+
+    selected = ingredient_by_label[selected_label]
+    selected_code = str(selected["code"])
+    if st.session_state.get("edit_ingredient_context") != selected_code:
+        st.session_state.edit_ingredient_name = str(selected["name"])
+        st.session_state.edit_ingredient_brand = str(selected["brand"])
+        st.session_state.edit_ingredient_quantity = format_number_input(
+            selected["purchase_quantity"]
+        )
+        st.session_state.edit_ingredient_unit = str(selected["unit"])
+        st.session_state.edit_ingredient_price = format_number_input(selected["price"])
+        st.session_state.edit_ingredient_context = selected_code
+
+    brand_options = sorted(
+        set(registered_brands) | {str(selected["brand"])},
+        key=str.casefold,
+    )
+    with st.container(border=False, key="ingredient_edit_form_panel"):
+        st.markdown(
+            '<p class="form-section-title">Identificação do ingrediente</p>',
+            unsafe_allow_html=True,
+        )
+        ingredient_column, brand_column = st.columns(2)
+        with ingredient_column:
+            ingredient = st.text_input("Ingrediente *", key="edit_ingredient_name")
+        with brand_column:
+            brand = st.selectbox(
+                "Marca *",
+                options=brand_options,
+                accept_new_options=True,
+                key="edit_ingredient_brand",
+            )
+
+        st.markdown(
+            '<p class="form-section-title">Embalagem e custo</p>',
+            unsafe_allow_html=True,
+        )
+        quantity_column, unit_column, price_column = st.columns([1, 0.8, 1])
+        with quantity_column:
+            quantity_text = st.text_input(
+                "Quantidade *", key="edit_ingredient_quantity"
+            )
+        with unit_column:
+            unit = st.selectbox(
+                "Unidade *",
+                options=("g", "kg", "ml", "l", "UN"),
+                key="edit_ingredient_unit",
+            )
+        with price_column:
+            price_text = st.text_input(
+                "Valor pago (R$) *", key="edit_ingredient_price"
+            )
+
+        quantity = parse_brazilian_number(quantity_text)
+        price = parse_brazilian_number(price_text)
+        unit_cost = (
+            price / quantity
+            if price is not None and quantity is not None and quantity > 0
+            else 0.0
+        )
+        st.markdown(
+            f"""
+            <div class="cost-summary">
+                <div>
+                    <p class="cost-summary-label">Custo por unidade de medida</p>
+                    <small>Valor calculado automaticamente</small>
+                </div>
+                <p class="cost-summary-value">{format_currency(unit_cost)} / {unit}</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        submitted = st.button(
+            "Salvar alterações",
+            use_container_width=True,
+            key="edit_submit_ingredient",
+            disabled=st.session_state.get(
+                "edit_ingredient_save_in_progress", False
+            ),
+        )
+
+    if not submitted:
+        return
+
+    errors = []
+    if not ingredient.strip():
+        errors.append("Informe o ingrediente.")
+    if not brand or not brand.strip():
+        errors.append("Informe a marca.")
+    if quantity is None or quantity <= 0:
+        errors.append("Informe uma quantidade válida e maior que zero.")
+    if price is None or price <= 0:
+        errors.append("Informe um valor pago válido e maior que zero.")
+    if errors:
+        st.error(" ".join(errors))
+        return
+
+    save_key = "edit_ingredient_save_in_progress"
+    if st.session_state.get(save_key, False):
+        st.warning("Alteração em andamento. Aguarde a conclusão.")
+        return
+    st.session_state[save_key] = True
+    try:
+        with MATERIAL_WRITE_LOCK:
+            sheets = GoogleSheetsClient.from_streamlit_secrets()
+            if material_already_exists(
+                sheets,
+                ingredient=ingredient,
+                brand=brand,
+                quantity=quantity,
+                unit=unit,
+                price=price,
+                excluded_code=selected_code,
+            ):
+                st.warning(
+                    "Já existe outro ingrediente com a mesma marca, quantidade, "
+                    "unidade e valor pago."
+                )
+                return
+            worksheet = sheets.worksheet(MATERIALS_WORKSHEET)
+            codes = worksheet.col_values(1)
+            try:
+                sheet_row = codes.index(selected_code) + 1
+            except ValueError:
+                st.error("O ingrediente selecionado não foi encontrado na planilha.")
+                return
+            worksheet.update(
+                values=[[
+                    selected_code,
+                    ingredient.strip(),
+                    brand.strip(),
+                    quantity,
+                    unit,
+                    price,
+                    unit_cost,
+                ]],
+                range_name=f"A{sheet_row}:G{sheet_row}",
+                value_input_option="USER_ENTERED",
+            )
+            update_ingredient_in_recipes(
+                sheets,
+                selected_code,
+                ingredient.strip(),
+                unit,
+                unit_cost,
+            )
+        load_materials.clear()
+        load_registered_brands.clear()
+        load_existing_recipes.clear()
+    except Exception as error:
+        st.error(f"Não foi possível alterar o ingrediente: {error}")
+        return
+    finally:
+        st.session_state[save_key] = False
+
+    st.success("Ingrediente atualizado com sucesso.")
+
+
+def render_ingredient_page() -> None:
+    render_page_header(
+        "Ingredientes",
+        "Cadastre um novo ingrediente ou consulte e altere um existente.",
+    )
+    new_tab, edit_tab = st.tabs(["Novo ingrediente", "Consultar e editar"])
+    with new_tab:
+        render_new_ingredient_form()
+    with edit_tab:
+        render_edit_ingredient_form()
 
 
 def format_currency(value: float, decimals: int = 6) -> str:
@@ -411,6 +640,33 @@ def hydrate_recipe_editor(
         )
 
 
+def add_legacy_recipe_material_options(
+    recipe: dict[str, object],
+    material_by_code: dict[str, dict[str, object]],
+    material_by_label: dict[str, dict[str, object]],
+) -> None:
+    """Recria em todo rerun as opções de itens antigos ainda sem cadastro."""
+    for item in recipe["items"]:
+        material_code = str(item["material_code"])
+        if material_code and material_code in material_by_code:
+            continue
+        legacy_name = str(item["material_name"]) or "Item sem cadastro"
+        legacy_label = f"⚠ Não cadastrado — {legacy_name}"
+        material_by_label.setdefault(
+            legacy_label,
+            {
+                "code": "",
+                "name": legacy_name,
+                "brand": "",
+                "purchase_quantity": None,
+                "price": None,
+                "unit": str(item["unit"]),
+                "unit_cost": None,
+                "label": legacy_label,
+            },
+        )
+
+
 def recipe_name_exists(
     sheets: GoogleSheetsClient,
     name: str,
@@ -471,7 +727,7 @@ def render_recipe_editor(editing_mode: bool, prefix: str) -> None:
         return
 
     if not materials:
-        st.warning("Cadastre ao menos uma matéria-prima antes de criar receitas.")
+        st.warning("Cadastre ao menos um ingrediente antes de criar receitas.")
         return
 
     material_by_label = {str(item["label"]): item for item in materials}
@@ -499,6 +755,11 @@ def render_recipe_editor(editing_mode: bool, prefix: str) -> None:
             return
         editing_recipe = recipe_by_label[selected_recipe_label]
         editing_code = str(editing_recipe["code"])
+        add_legacy_recipe_material_options(
+            editing_recipe,
+            material_by_code,
+            material_by_label,
+        )
         editor_context = f"edit:{editing_code}"
         context_key = f"{prefix}_recipe_editor_context"
         if st.session_state.get(context_key) != editor_context:
@@ -539,7 +800,7 @@ def render_recipe_editor(editing_mode: bool, prefix: str) -> None:
             )
 
         st.markdown(
-            '<p class="form-section-title">Matérias-primas utilizadas</p>',
+            '<p class="form-section-title">Ingredientes utilizados</p>',
             unsafe_allow_html=True,
         )
 
@@ -559,10 +820,10 @@ def render_recipe_editor(editing_mode: bool, prefix: str) -> None:
                 )
                 with material_column:
                     selected_label = st.selectbox(
-                        "Matéria-prima *",
+                        "Ingrediente *",
                         options=material_labels,
                         index=None,
-                        placeholder="Selecione uma matéria-prima",
+                        placeholder="Selecione um ingrediente",
                         key=f"{prefix}_recipe_material_{item_id}",
                     )
 
@@ -623,7 +884,7 @@ def render_recipe_editor(editing_mode: bool, prefix: str) -> None:
             <div class="cost-summary">
                 <div>
                     <p class="cost-summary-label">Custo total da receita</p>
-                    <small>Soma de todas as matérias-primas</small>
+                    <small>Soma de todos os ingredientes</small>
                 </div>
                 <p class="cost-summary-value">{format_currency(total_cost)}</p>
             </div>
@@ -655,7 +916,7 @@ def render_recipe_editor(editing_mode: bool, prefix: str) -> None:
         material = item["material"]
         quantity = item["quantity"]
         if material is None:
-            errors.append(f"Selecione a matéria-prima do ingrediente {position}.")
+            errors.append(f"Selecione o ingrediente {position}.")
             continue
         is_original_edit_item = (
             editing_code
@@ -670,7 +931,7 @@ def render_recipe_editor(editing_mode: bool, prefix: str) -> None:
         identity = str(material["code"]) or normalize_text(str(material["name"]))
         selected_codes.append(identity)
     if len(selected_codes) != len(set(selected_codes)):
-        errors.append("A mesma matéria-prima não pode ser adicionada duas vezes.")
+        errors.append("O mesmo ingrediente não pode ser adicionado duas vezes.")
 
     if errors:
         st.error(" ".join(errors))
@@ -745,8 +1006,8 @@ if isinstance(page, list):
     page = page[0] if page else "inicio"
 
 render_sidebar(page)
-if page == "materia-prima":
-    render_material_form()
+if page in {"materia-prima", "ingredientes"}:
+    render_ingredient_page()
 elif page == "receitas":
     render_recipe_form()
 elif page == "receitas-nova":

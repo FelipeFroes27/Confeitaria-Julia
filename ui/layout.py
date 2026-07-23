@@ -45,7 +45,7 @@ def render_sidebar(active_page: str = "inicio") -> None:
         st.markdown('<p class="menu-title">CARDÁPIO</p>', unsafe_allow_html=True)
         menu_items = (
             ("inicio", "⌂", "Início", "/"),
-            ("materia-prima", "＋", "Matéria-prima", "/?pagina=materia-prima"),
+            ("ingredientes", "＋", "Ingredientes", "/?pagina=ingredientes"),
             ("receitas", "≡", "Receitas", "/?pagina=receitas"),
         )
         links = []
@@ -366,7 +366,8 @@ def _apply_global_styles() -> None:
                 box-shadow: none;
             }}
 
-            .st-key-material_form_panel {{
+            .st-key-material_form_panel,
+            .st-key-ingredient_edit_form_panel {{
                 padding: 1.65rem;
                 border: 2px solid var(--caju-black) !important;
                 border-radius: 16px !important;
