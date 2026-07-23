@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import streamlit as st
-import streamlit.components.v1 as components
 
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
@@ -20,31 +19,20 @@ def configure_page(title: str = "Caju | Doces em família") -> None:
         layout="wide",
         initial_sidebar_state="expanded",
     )
-    _disable_browser_translation()
+    _mark_page_as_notranslate()
     _apply_global_styles()
 
 
-def _disable_browser_translation() -> None:
-    """Evita que o navegador traduza marcas, siglas e unidades do aplicativo."""
-    components.html(
+def _mark_page_as_notranslate() -> None:
+    """Sinaliza ao tradutor sem manipular o DOM controlado pelo Streamlit."""
+    st.markdown(
         """
-        <script>
-            const doc = window.parent.document;
-            doc.documentElement.lang = "pt-BR";
-            doc.documentElement.setAttribute("translate", "no");
-            doc.body.setAttribute("translate", "no");
-            doc.body.classList.add("notranslate");
-
-            if (!doc.head.querySelector('meta[name="google"][content="notranslate"]')) {
-                const meta = doc.createElement("meta");
-                meta.name = "google";
-                meta.content = "notranslate";
-                doc.head.appendChild(meta);
-            }
-        </script>
+        <meta name="google" content="notranslate">
+        <span class="notranslate" translate="no" style="display:none">
+            Aplicação originalmente em português do Brasil.
+        </span>
         """,
-        height=0,
-        width=0,
+        unsafe_allow_html=True,
     )
 
 
