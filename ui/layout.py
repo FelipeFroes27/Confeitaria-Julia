@@ -71,7 +71,10 @@ def render_sidebar(active_page: str = "inicio") -> None:
 
 def render_page_header(title: str, subtitle: str | None = None) -> None:
     """Exibe título à esquerda e o logo padrão no canto superior direito."""
-    text_column, logo_column = st.columns([5, 1], vertical_alignment="center")
+    text_column, refresh_column, logo_column = st.columns(
+        [5, 1.25, 1],
+        vertical_alignment="center",
+    )
 
     with text_column:
         st.markdown(f'<h1 class="page-title">{title}</h1>', unsafe_allow_html=True)
@@ -80,6 +83,15 @@ def render_page_header(title: str, subtitle: str | None = None) -> None:
                 f'<p class="page-subtitle">{subtitle}</p>',
                 unsafe_allow_html=True,
             )
+
+    with refresh_column:
+        if st.button(
+            "↻ Atualizar dados",
+            key=f"refresh_data_{title}",
+            use_container_width=True,
+        ):
+            st.cache_data.clear()
+            st.toast("Dados atualizados com a planilha.")
 
     with logo_column:
         if LOGO_PATH.exists():

@@ -110,6 +110,11 @@ def load_existing_recipes() -> list[dict[str, object]]:
     )
 
 
+def clear_app_data_cache() -> None:
+    """Invalida todos os dados lidos da planilha após uma gravação."""
+    st.cache_data.clear()
+
+
 def material_already_exists(
     sheets: GoogleSheetsClient,
     ingredient: str,
@@ -319,7 +324,7 @@ def render_new_ingredient_form() -> None:
                     unit_cost,
                 ],
             )
-        load_registered_brands.clear()
+        clear_app_data_cache()
     except Exception as error:
         st.error(f"Não foi possível salvar o cadastro: {error}")
         return
@@ -529,9 +534,7 @@ def render_edit_ingredient_form() -> None:
                 unit,
                 unit_cost,
             )
-        load_materials.clear()
-        load_registered_brands.clear()
-        load_existing_recipes.clear()
+        clear_app_data_cache()
     except Exception as error:
         st.error(f"Não foi possível alterar o ingrediente: {error}")
         return
@@ -987,7 +990,7 @@ def render_recipe_editor(editing_mode: bool, prefix: str) -> None:
                 replace_recipe_rows(sheets, editing_code, rows)
             else:
                 sheets.append_rows(RECIPES_WORKSHEET, rows)
-            load_existing_recipes.clear()
+            clear_app_data_cache()
     except Exception as error:
         st.error(f"Não foi possível salvar a receita: {error}")
         return
