@@ -43,6 +43,16 @@ def _navigate_to(page: str) -> None:
         st.query_params["pagina"] = page
 
 
+def _refresh_sheet_data() -> None:
+    """Limpa leituras em cache e força a recarga dos registros abertos."""
+    st.cache_data.clear()
+    # Mantemos as seleções da receita/ingrediente, mas removemos os marcadores
+    # de hidratação para que os dados sejam relidos da planilha no novo rerun.
+    st.session_state.pop("edit_recipe_editor_context", None)
+    st.session_state.pop("edit_ingredient_context", None)
+    st.toast("Dados atualizados com a planilha.")
+
+
 def render_sidebar(active_page: str = "inicio") -> None:
     """Exibe o menu lateral padrão da aplicação."""
     with st.sidebar:
@@ -85,13 +95,12 @@ def render_page_header(title: str, subtitle: str | None = None) -> None:
             )
 
     with refresh_column:
-        if st.button(
+        st.button(
             "↻ Atualizar dados",
             key=f"refresh_data_{title}",
             use_container_width=True,
-        ):
-            st.cache_data.clear()
-            st.toast("Dados atualizados com a planilha.")
+            on_click=_refresh_sheet_data,
+        )
 
     with logo_column:
         if LOGO_PATH.exists():
