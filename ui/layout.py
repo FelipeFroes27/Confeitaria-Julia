@@ -36,6 +36,13 @@ def _mark_page_as_notranslate() -> None:
     )
 
 
+def _navigate_to(page: str) -> None:
+    """Troca a tela dentro da sessão, sem recarregar o navegador."""
+    st.query_params.clear()
+    if page != "inicio":
+        st.query_params["pagina"] = page
+
+
 def render_sidebar(active_page: str = "inicio") -> None:
     """Exibe o menu lateral padrão da aplicação."""
     with st.sidebar:
@@ -44,18 +51,22 @@ def render_sidebar(active_page: str = "inicio") -> None:
 
         st.markdown('<p class="menu-title">CARDÁPIO</p>', unsafe_allow_html=True)
         menu_items = (
-            ("inicio", "⌂", "Início", "/"),
-            ("ingredientes", "＋", "Ingredientes", "/?pagina=ingredientes"),
-            ("receitas", "≡", "Receitas", "/?pagina=receitas"),
+            ("inicio", "⌂", "Início"),
+            ("ingredientes", "＋", "Ingredientes"),
+            ("receitas", "≡", "Receitas"),
         )
-        links = []
-        for page, icon, label, href in menu_items:
-            active_class = " active" if page == active_page else ""
-            links.append(
-                f'<a class="sidebar-menu-item{active_class}" href="{href}" target="_self">'
-                f'<span class="sidebar-menu-icon">{icon}</span>{label}</a>'
+        normalized_active_page = (
+            "ingredientes" if active_page == "materia-prima" else active_page
+        )
+        for page, icon, label in menu_items:
+            state = "active" if page == normalized_active_page else "inactive"
+            st.button(
+                f"{icon}  {label}",
+                key=f"sidebar_nav_{page}_{state}",
+                use_container_width=True,
+                on_click=_navigate_to,
+                args=(page,),
             )
-        st.markdown("".join(links), unsafe_allow_html=True)
 
 
 def render_page_header(title: str, subtitle: str | None = None) -> None:
@@ -112,42 +123,28 @@ def _apply_global_styles() -> None:
                 border-radius: 14px;
             }}
 
-            .sidebar-menu-item {{
-                display: flex;
-                align-items: center;
-                gap: 0.7rem;
+            [data-testid="stSidebar"] [class*="st-key-sidebar_nav_"] button {{
                 min-height: 3rem;
-                margin: 0.35rem 0;
+                margin: 0.1rem 0;
                 padding: 0.65rem 0.85rem;
-                color: var(--caju-black);
-                background: var(--caju-yellow);
-                border: 2px solid var(--caju-black);
-                border-radius: 12px;
-                box-shadow: none;
-                font-weight: 700;
-                text-decoration: none !important;
+                justify-content: flex-start;
+                color: var(--caju-black) !important;
+                background: var(--caju-yellow) !important;
+                border: 2px solid var(--caju-black) !important;
+                border-radius: 12px !important;
+                box-shadow: none !important;
+                font-weight: 800;
             }}
 
-            .sidebar-menu-item:hover {{
-                color: var(--caju-black);
-                background: rgba(17, 17, 17, 0.08);
-                box-shadow: none;
+            [data-testid="stSidebar"] [class*="st-key-sidebar_nav_"] button:hover,
+            [data-testid="stSidebar"] [class*="st-key-sidebar_nav_"][class*="_active"] button {{
+                color: var(--caju-black) !important;
+                background: rgba(17, 17, 17, 0.08) !important;
             }}
 
-            .sidebar-menu-item.active {{
-                background: rgba(17, 17, 17, 0.08);
-                box-shadow: none;
-            }}
-
-            .sidebar-menu-icon {{
-                display: grid;
-                width: 1.65rem;
-                height: 1.65rem;
-                place-items: center;
-                border: 2px solid var(--caju-black);
-                border-radius: 7px;
-                font-size: 1.15rem;
-                line-height: 1;
+            [data-testid="stSidebar"] [class*="st-key-sidebar_nav_"] button p,
+            [data-testid="stSidebar"] [class*="st-key-sidebar_nav_"] button span {{
+                color: var(--caju-black) !important;
             }}
 
             .menu-title {{
