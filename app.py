@@ -74,33 +74,6 @@ def normalize_unit(value: str) -> str:
     return normalized
 
 
-UNIT_DIMENSIONS = {
-    "g": ("mass", 1.0),
-    "kg": ("mass", 1000.0),
-    "ml": ("volume", 1.0),
-    "l": ("volume", 1000.0),
-    "UN": ("count", 1.0),
-}
-
-
-def convert_quantity_between_units(
-    quantity: float,
-    old_unit: str,
-    new_unit: str,
-) -> float:
-    """Converte uma quantidade entre unidades compatíveis."""
-    normalized_old = normalize_unit(old_unit)
-    normalized_new = normalize_unit(new_unit)
-    old_dimension, old_factor = UNIT_DIMENSIONS[normalized_old]
-    new_dimension, new_factor = UNIT_DIMENSIONS[normalized_new]
-    if old_dimension != new_dimension:
-        raise ValueError(
-            f"Não é possível converter automaticamente de {normalized_old} "
-            f"para {normalized_new}."
-        )
-    return quantity * old_factor / new_factor
-
-
 @st.cache_data(ttl=120, show_spinner=False)
 def load_existing_recipes() -> list[dict[str, object]]:
     sheets = GoogleSheetsClient.from_streamlit_secrets()
@@ -366,11 +339,10 @@ def build_ingredient_recipe_updates(
     sheets: GoogleSheetsClient,
     ingredient_code: str,
     ingredient_name: str,
-    old_unit: str,
     new_unit: str,
     unit_cost: float,
 ) -> list[dict[str, object]]:
-    """Prepara atualizações das receitas, convertendo quantidades se necessário."""
+    """Atualiza nome, unidade e custo sem modificar a quantidade informada."""
     worksheet = sheets.worksheet(RECIPES_WORKSHEET)
     rows = worksheet.get_all_values()[1:]
     updates: list[dict[str, object]] = []
@@ -379,24 +351,15 @@ def build_ingredient_recipe_updates(
         if row[2].strip() != ingredient_code:
             continue
         used_quantity = parse_brazilian_number(row[4])
-        converted_quantity: float | str = ""
-        if used_quantity is not None:
-            converted_quantity = convert_quantity_between_units(
-                used_quantity,
-                old_unit,
-                new_unit,
-            )
         item_cost: float | str = (
-            float(converted_quantity) * unit_cost
-            if converted_quantity != ""
-            else ""
+            used_quantity * unit_cost if used_quantity is not None else ""
         )
         updates.append(
             {
                 "range": f"'{RECIPES_WORKSHEET}'!D{sheet_row}:G{sheet_row}",
                 "values": [[
                     ingredient_name,
-                    converted_quantity,
+                    row[4],
                     new_unit,
                     item_cost,
                 ]],
@@ -560,7 +523,6 @@ def render_edit_ingredient_form() -> None:
                 sheets,
                 selected_code,
                 ingredient.strip(),
-                str(selected["unit"]),
                 unit,
                 unit_cost,
             )
