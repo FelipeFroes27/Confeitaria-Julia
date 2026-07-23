@@ -346,6 +346,18 @@ def _apply_global_styles() -> None:
                 color: rgba(17, 17, 17, 0.52) !important;
             }}
 
+            [data-testid="stFileUploaderDropzone"] {{
+                color: var(--caju-black) !important;
+                background: var(--caju-yellow) !important;
+                border: 2px dashed var(--caju-black) !important;
+                border-radius: 12px !important;
+            }}
+
+            [data-testid="stFileUploaderDropzone"] small,
+            [data-testid="stFileUploaderDropzone"] span {{
+                color: var(--caju-black) !important;
+            }}
+
             [data-testid="stNumberInput"] button {{
                 min-width: 2.5rem;
                 min-height: 3rem;

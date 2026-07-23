@@ -1,6 +1,7 @@
 import streamlit as st
 from threading import Lock
 
+from services.cloudinary_images import upload_recipe_image
 from services.google_sheets import GoogleSheetsClient, GoogleSheetsConfigError
 from ui.layout import configure_page, render_page_header, render_sidebar
 
@@ -803,6 +804,41 @@ def render_recipe_editor(editing_mode: bool, prefix: str) -> None:
             )
 
         st.markdown(
+            '<p class="form-section-title">Foto da receita</p>',
+            unsafe_allow_html=True,
+        )
+        current_photo = str(
+            st.session_state.get(f"{prefix}_editing_recipe_photo", "")
+        ).strip()
+        photo_column, preview_column = st.columns([2, 1])
+        with photo_column:
+            uploaded_photo = st.file_uploader(
+                "Imagem da receita",
+                type=("jpg", "jpeg", "png", "webp"),
+                help="Formatos permitidos: JPG, PNG e WebP. Tamanho máximo: 10 MB.",
+                key=f"{prefix}_recipe_photo_upload",
+            )
+            if editing_code and current_photo:
+                st.caption(
+                    "Envie uma nova imagem somente se desejar substituir a foto atual."
+                )
+            else:
+                st.caption("A foto é opcional e poderá ser adicionada posteriormente.")
+        with preview_column:
+            if uploaded_photo is not None:
+                st.image(
+                    uploaded_photo,
+                    caption="Nova foto",
+                    use_container_width=True,
+                )
+            elif current_photo:
+                st.image(
+                    current_photo,
+                    caption="Foto atual",
+                    use_container_width=True,
+                )
+
+        st.markdown(
             '<p class="form-section-title">Ingredientes utilizados</p>',
             unsafe_allow_html=True,
         )
@@ -914,6 +950,8 @@ def render_recipe_editor(editing_mode: bool, prefix: str) -> None:
         errors.append("Informe o nome da receita.")
     if profit_rate is None or profit_rate < 0:
         errors.append("Informe uma taxa de lucro válida.")
+    if uploaded_photo is not None and uploaded_photo.size > 10 * 1024 * 1024:
+        errors.append("A foto da receita deve ter no máximo 10 MB.")
     selected_codes: list[str] = []
     for position, item in enumerate(recipe_items, start=1):
         material = item["material"]
@@ -955,6 +993,13 @@ def render_recipe_editor(editing_mode: bool, prefix: str) -> None:
             recipe_code = editing_code or str(
                 sheets.next_integer_code(RECIPES_WORKSHEET)
             )
+            photo_url = current_photo
+            if uploaded_photo is not None:
+                photo_url = upload_recipe_image(
+                    uploaded_photo,
+                    recipe_code,
+                    recipe_name.strip(),
+                )
             percent_value = f"{profit_rate:g}%".replace(".", ",")
             rows = []
             for position, item in enumerate(recipe_items):
@@ -977,10 +1022,7 @@ def render_recipe_editor(editing_mode: bool, prefix: str) -> None:
                         item_cost,
                         percent_value,
                         (
-                            st.session_state.get(
-                                f"{prefix}_editing_recipe_photo",
-                                "",
-                            )
+                            photo_url
                             if position == 0
                             else ""
                         ),
