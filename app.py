@@ -145,6 +145,12 @@ def render_connection_status() -> None:
             "Adicione a credencial em `.streamlit/secrets.toml` para ativá-la."
         )
         return
+    except Exception as error:
+        st.warning(
+            "O aplicativo abriu, mas não foi possível validar a conexão com "
+            f"o Google Sheets ({error.__class__.__name__}). Confira as secrets."
+        )
+        return
 
     st.success(f"Google Sheets configurado: `{sheets.spreadsheet_id}`")
 
