@@ -1,7 +1,7 @@
 import streamlit as st
 from threading import Lock
 
-from services.cloudinary_images import upload_recipe_image
+from services.cloudinary_images import delete_recipe_image, upload_recipe_image
 from services.google_sheets import GoogleSheetsClient, GoogleSheetsConfigError
 from ui.layout import configure_page, render_page_header, render_sidebar
 
@@ -68,10 +68,37 @@ def normalize_text(value: str) -> str:
 
 def normalize_unit(value: str) -> str:
     normalized = value.strip().casefold()
-    # Registros antigos podem ter sido gravados como "un" ou "um".
-    if normalized in {"un", "um"}:
+    # Registros antigos podem ter sido gravados com estas variações.
+    if normalized in {"un", "um", "unidade", "unidae"}:
         return "UN"
     return normalized
+
+
+UNIT_DIMENSIONS = {
+    "g": ("mass", 1.0),
+    "kg": ("mass", 1000.0),
+    "ml": ("volume", 1.0),
+    "l": ("volume", 1000.0),
+    "UN": ("count", 1.0),
+}
+
+
+def convert_quantity_between_units(
+    quantity: float,
+    old_unit: str,
+    new_unit: str,
+) -> float:
+    """Converte uma quantidade entre unidades compatíveis."""
+    normalized_old = normalize_unit(old_unit)
+    normalized_new = normalize_unit(new_unit)
+    old_dimension, old_factor = UNIT_DIMENSIONS[normalized_old]
+    new_dimension, new_factor = UNIT_DIMENSIONS[normalized_new]
+    if old_dimension != new_dimension:
+        raise ValueError(
+            f"Não é possível converter automaticamente de {normalized_old} "
+            f"para {normalized_new}."
+        )
+    return quantity * old_factor / new_factor
 
 
 @st.cache_data(ttl=120, show_spinner=False)
@@ -335,33 +362,47 @@ def render_new_ingredient_form() -> None:
     st.success(f"Ingrediente cadastrado com sucesso. Código: {code}.")
 
 
-def update_ingredient_in_recipes(
+def build_ingredient_recipe_updates(
     sheets: GoogleSheetsClient,
     ingredient_code: str,
     ingredient_name: str,
-    unit: str,
+    old_unit: str,
+    new_unit: str,
     unit_cost: float,
-) -> None:
-    """Mantém as receitas sincronizadas após a alteração de um ingrediente."""
+) -> list[dict[str, object]]:
+    """Prepara atualizações das receitas, convertendo quantidades se necessário."""
     worksheet = sheets.worksheet(RECIPES_WORKSHEET)
     rows = worksheet.get_all_values()[1:]
-    updates = []
+    updates: list[dict[str, object]] = []
     for sheet_row, raw_row in enumerate(rows, start=2):
         row = raw_row + [""] * (9 - len(raw_row))
         if row[2].strip() != ingredient_code:
             continue
         used_quantity = parse_brazilian_number(row[4])
+        converted_quantity: float | str = ""
+        if used_quantity is not None:
+            converted_quantity = convert_quantity_between_units(
+                used_quantity,
+                old_unit,
+                new_unit,
+            )
         item_cost: float | str = (
-            used_quantity * unit_cost if used_quantity is not None else ""
+            float(converted_quantity) * unit_cost
+            if converted_quantity != ""
+            else ""
         )
         updates.append(
             {
-                "range": f"D{sheet_row}:G{sheet_row}",
-                "values": [[ingredient_name, row[4], unit, item_cost]],
+                "range": f"'{RECIPES_WORKSHEET}'!D{sheet_row}:G{sheet_row}",
+                "values": [[
+                    ingredient_name,
+                    converted_quantity,
+                    new_unit,
+                    item_cost,
+                ]],
             }
         )
-    if updates:
-        worksheet.batch_update(updates, value_input_option="USER_ENTERED")
+    return updates
 
 
 def render_edit_ingredient_form() -> None:
@@ -515,25 +556,36 @@ def render_edit_ingredient_form() -> None:
             except ValueError:
                 st.error("O ingrediente selecionado não foi encontrado na planilha.")
                 return
-            worksheet.update(
-                values=[[
-                    selected_code,
-                    ingredient.strip(),
-                    brand.strip(),
-                    quantity,
-                    unit,
-                    price,
-                    unit_cost,
-                ]],
-                range_name=f"A{sheet_row}:G{sheet_row}",
-                value_input_option="USER_ENTERED",
-            )
-            update_ingredient_in_recipes(
+            recipe_updates = build_ingredient_recipe_updates(
                 sheets,
                 selected_code,
                 ingredient.strip(),
+                str(selected["unit"]),
                 unit,
                 unit_cost,
+            )
+            sheets.spreadsheet().values_batch_update(
+                {
+                    "valueInputOption": "RAW",
+                    "data": [
+                        {
+                            "range": (
+                                f"'{MATERIALS_WORKSHEET}'!"
+                                f"A{sheet_row}:G{sheet_row}"
+                            ),
+                            "values": [[
+                                selected_code,
+                                ingredient.strip(),
+                                brand.strip(),
+                                quantity,
+                                unit,
+                                price,
+                                unit_cost,
+                            ]],
+                        },
+                        *recipe_updates,
+                    ],
+                }
             )
         clear_app_data_cache()
     except Exception as error:
@@ -691,21 +743,41 @@ def replace_recipe_rows(
     recipe_code: str,
     new_rows: list[list[object]],
 ) -> None:
+    """Atualiza somente as linhas da receita selecionada."""
     worksheet = sheets.worksheet(RECIPES_WORKSHEET)
     current_rows = worksheet.get_all_values()[1:]
-    preserved_rows = [
-        (row + [""] * (9 - len(row)))[:9]
-        for row in current_rows
-        if not row or row[0].strip() != recipe_code
+    recipe_sheet_rows = [
+        sheet_row
+        for sheet_row, row in enumerate(current_rows, start=2)
+        if row and row[0].strip() == recipe_code
     ]
-    final_rows = preserved_rows + new_rows
-    write_size = max(len(current_rows), len(final_rows))
-    values = final_rows + [[""] * 9 for _ in range(write_size - len(final_rows))]
-    worksheet.update(
-        values=values,
-        range_name=f"A2:I{write_size + 1}",
-        value_input_option="USER_ENTERED",
+    if not recipe_sheet_rows:
+        raise RuntimeError("A receita selecionada não foi encontrada na planilha.")
+
+    shared_count = min(len(recipe_sheet_rows), len(new_rows))
+    updates = [
+        {
+            "range": f"A{sheet_row}:I{sheet_row}",
+            "values": [new_rows[position]],
+        }
+        for position, sheet_row in enumerate(recipe_sheet_rows[:shared_count])
+    ]
+    updates.extend(
+        {
+            "range": f"A{sheet_row}:I{sheet_row}",
+            "values": [[""] * 9],
+        }
+        for sheet_row in recipe_sheet_rows[shared_count:]
     )
+    if updates:
+        worksheet.batch_update(updates, value_input_option="RAW")
+
+    additional_rows = new_rows[shared_count:]
+    if additional_rows:
+        worksheet.append_rows(
+            additional_rows,
+            value_input_option="RAW",
+        )
 
 
 def render_recipe_form() -> None:
@@ -959,15 +1031,7 @@ def render_recipe_editor(editing_mode: bool, prefix: str) -> None:
         if material is None:
             errors.append(f"Selecione o ingrediente {position}.")
             continue
-        is_original_edit_item = (
-            editing_code
-            and item["item_id"]
-            in st.session_state.get(
-                f"{prefix}_editing_original_item_ids",
-                set(),
-            )
-        )
-        if (quantity is None or float(quantity) <= 0) and not is_original_edit_item:
+        if quantity is None or float(quantity) <= 0:
             errors.append(f"Informe uma quantidade válida no ingrediente {position}.")
         identity = str(material["code"]) or normalize_text(str(material["name"]))
         selected_codes.append(identity)
@@ -984,6 +1048,8 @@ def render_recipe_editor(editing_mode: bool, prefix: str) -> None:
         return
 
     st.session_state[save_state_key] = True
+    uploaded_image = None
+    sheet_saved = False
     try:
         with RECIPE_WRITE_LOCK:
             sheets = GoogleSheetsClient.from_streamlit_secrets()
@@ -995,11 +1061,12 @@ def render_recipe_editor(editing_mode: bool, prefix: str) -> None:
             )
             photo_url = current_photo
             if uploaded_photo is not None:
-                photo_url = upload_recipe_image(
+                uploaded_image = upload_recipe_image(
                     uploaded_photo,
                     recipe_code,
                     recipe_name.strip(),
                 )
+                photo_url = uploaded_image.url
             percent_value = f"{profit_rate:g}%".replace(".", ",")
             rows = []
             for position, item in enumerate(recipe_items):
@@ -1032,14 +1099,28 @@ def render_recipe_editor(editing_mode: bool, prefix: str) -> None:
                 replace_recipe_rows(sheets, editing_code, rows)
             else:
                 sheets.append_rows(RECIPES_WORKSHEET, rows)
+            sheet_saved = True
             clear_app_data_cache()
     except Exception as error:
+        if uploaded_image is not None and not sheet_saved:
+            try:
+                delete_recipe_image(uploaded_image.public_id)
+            except Exception:
+                pass
         st.error(f"Não foi possível salvar a receita: {error}")
         return
     finally:
         st.session_state[save_state_key] = False
 
     action = "atualizada" if editing_code else "cadastrada"
+    if uploaded_image is not None and current_photo:
+        try:
+            delete_recipe_image(current_photo, is_url=True)
+        except Exception:
+            st.warning(
+                "A receita foi salva, mas não foi possível remover a foto antiga "
+                "do armazenamento."
+            )
     st.success(
         f"Receita {action} com sucesso. Código: {recipe_code}. "
         f"Custo total: {format_currency(total_cost)}."

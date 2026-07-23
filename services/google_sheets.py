@@ -67,13 +67,13 @@ class GoogleSheetsClient:
     def append_row(self, worksheet_name: str, values: list[Any]) -> None:
         self.worksheet(worksheet_name).append_row(
             values,
-            value_input_option="USER_ENTERED",
+            value_input_option="RAW",
         )
 
     def append_rows(self, worksheet_name: str, values: list[list[Any]]) -> None:
         self.worksheet(worksheet_name).append_rows(
             values,
-            value_input_option="USER_ENTERED",
+            value_input_option="RAW",
         )
 
     def next_integer_code(self, worksheet_name: str, column: int = 1) -> int:
