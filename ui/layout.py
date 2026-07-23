@@ -52,7 +52,7 @@ def render_sidebar(active_page: str = "inicio") -> None:
         for page, icon, label, href in menu_items:
             active_class = " active" if page == active_page else ""
             links.append(
-                f'<a class="sidebar-menu-item{active_class}" href="{href}">'
+                f'<a class="sidebar-menu-item{active_class}" href="{href}" target="_self">'
                 f'<span class="sidebar-menu-icon">{icon}</span>{label}</a>'
             )
         st.markdown("".join(links), unsafe_allow_html=True)
