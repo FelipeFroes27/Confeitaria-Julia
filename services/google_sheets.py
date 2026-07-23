@@ -12,6 +12,7 @@ SCOPES = (
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
 )
+DEFAULT_SPREADSHEET_ID = "1xi1TacG3ziwze0f1LoWHmRV09VWA7M4NMhc0xQZ7dRg"
 
 
 class GoogleSheetsConfigError(RuntimeError):
@@ -104,4 +105,4 @@ def _read_spreadsheet_id(secrets: Mapping[str, Any]) -> str:
         return str(secrets["spreadsheet_id"])
     if "google_sheets" in secrets and "spreadsheet_id" in secrets["google_sheets"]:
         return str(secrets["google_sheets"]["spreadsheet_id"])
-    raise GoogleSheetsConfigError("O spreadsheet_id não foi configurado.")
+    return DEFAULT_SPREADSHEET_ID
